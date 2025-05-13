@@ -1,0 +1,470 @@
+REPORT ZREUSE_ALV_MAIN.
+
+START-OF-SELECTION.
+
+PERFORM get_data.
+PERFORM fill_field_catalog.
+PERFORM set_layout.
+PERFORM build_events.
+PERFORM display_alv.
+PERFORM top_of_page.
+
+
+INCLUDE ZREUSE_ALV_TOP.
+INCLUDE ZREUSE_ALV_FORMS.
+
+----------------------------------------------------------------------------------------
+
+*&---------------------------------------------------------------------*
+*&  Include           ZREUSE_ALV_TOP
+*&---------------------------------------------------------------------*
+
+* Seçim Ekranı
+TABLES: sflight.  "Tabloyu tanımla
+SELECT-OPTIONS: s_carrid FOR sflight-carrid.
+SELECT-OPTIONS: s_plntyp FOR sflight-planetype.
+
+START-OF-SELECTION.
+
+  TYPES: BEGIN OF ty_sflight,
+           carrid     TYPE s_carr_id,                  " CHAR 3
+           connid     TYPE s_conn_id,                  " NUMC 4
+           fldate     TYPE s_date,                     " DATS (Tarih tipi)
+           price      TYPE s_price,                    " Para birimi (Ondalık içerebilir)
+           currency   TYPE s_currcode,                 " Para kodu (CHAR 5)
+           planetype  TYPE s_planetye,                 " CHAR 10
+           seatsmax   TYPE s_seatsmax,                 " INT4
+           seatsocc   TYPE s_seatsocc,                 " INT4
+           cell_color TYPE slis_t_specialcol_alv,      " Renkleme alanı
+         END OF ty_sflight.
+
+  DATA: gs_cell_color TYPE slis_specialcol_alv.
+
+  DATA: gt_sflight TYPE TABLE OF ty_sflight,
+        gs_sflight TYPE ty_sflight.
+
+  DATA: gt_special_groups TYPE slis_t_sp_group_alv,
+        gs_special_groups TYPE slis_sp_group_alv.
+
+  " ALV başlık (TOP-OF-PAGE) sadece bir kez yazdırılsın diye kullanılan kontrol değişkeni.
+  " İlk başta 'FALSE' olarak ayarlanır, çalıştıktan sonra 'TRUE' yapılır.
+  DATA: gv_top_displayed TYPE abap_bool VALUE abap_false.
+
+* ALV Field Catalog (Alan Kataloğu) tablosu
+  DATA: gt_fieldcat TYPE  slis_t_fieldcat_alv,
+        gs_fieldcat TYPE slis_fieldcat_alv.
+
+* ALV Layout (Görünüm) tanımlamaları
+  DATA: gs_layout TYPE slis_layout_alv.
+
+* ALV Event tablosu
+  DATA: gt_events TYPE slis_t_event,
+        gs_event  TYPE slis_alv_event.
+
+* ALV için Liste Başlığı (Top-of-Page İçin)
+  DATA: gt_header TYPE TABLE OF slis_t_listheader,
+        gs_header TYPE slis_listheader.
+
+*-- ALV için sıralama değişkenleri --
+  DATA: gt_sort TYPE slis_t_sortinfo_alv,  " Sıralama bilgisi tablosu (kullanıcının ALV sıralama seçenekleri)
+        gs_sort TYPE slis_sortinfo_alv.    " Tekil sıralama bilgisi (örneğin "tarihe göre sırala")
+
+* ALV için REUSE_GRID_DISPLAY fonksiyonuna parametre olarak geçilecek yapı
+  DATA: g_callback TYPE slis_formname VALUE 'ALV_USER_COMMAND'. " Kullanıcı komutu için FORM adı
+
+  DATA: lt_header TYPE slis_t_listheader,     "top_of_page
+        ls_header TYPE slis_listheader.
+
+  DATA: lv_date TYPE char10.
+
+  DATA: gv_alv_called TYPE abap_bool VALUE abap_false.
+
+*-- ALV için hariç tutulan fonksiyon tuşları --
+  DATA: gt_exclude TYPE slis_t_extab,  " Hariç tutulacak butonlar için tablo (örneğin silme butonu)
+        gs_exclude TYPE slis_extab.    " Tekil hariç tutma yapısı (belirli butonları engellemek için)
+
+*-- ALV için filtre değişkenleri --
+  DATA: gt_filter TYPE slis_t_filter_alv,  " Filtreleme tablosu (belirli değerleri filtrelemek için)
+        gs_filter TYPE slis_filter_alv.    " Tekil filtre yapısı (ALV içi sütun bazlı filtre)
+
+  DATA: gs_variant TYPE disvariant.
+
+--------------------------------------------------------------------------------------------------------------
+
+*&---------------------------------------------------------------------*
+*&  Include           ZREUSE_ALV_FORMS
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_DATA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM get_data .
+  SELECT
+      sflight~carrid       " Havayolu Kodu
+      sflight~connid       " Uçuş Numarası
+      sflight~fldate       " Uçuş Tarihi
+      sflight~price       " Uçuş Ücreti
+      sflight~currency     " Para Birimi
+      sflight~planetype    " Uçak Tipi
+      sflight~seatsmax     " Maksimum Koltuk Sayısı
+      sflight~seatsocc      " Dolu Koltuk Sayısı
+    FROM sflight
+    INTO CORRESPONDING FIELDS OF TABLE gt_sflight
+    UP TO 1000 ROWS.
+
+  LOOP AT gt_sflight INTO gs_sflight.
+
+
+    " CARRID: LH ise farklı renk
+    CLEAR gs_cell_color.
+    gs_cell_color-fieldname = 'CARRID'.
+    gs_cell_color-color-col = 5.
+    gs_cell_color-color-int = 1.
+    gs_cell_color-color-inv = 0.
+    APPEND gs_cell_color TO gs_sflight-cell_color.
+    MODIFY gt_sflight FROM gs_sflight.
+
+
+    CLEAR gs_cell_color.
+    gs_cell_color-fieldname = 'CONNID'.
+    gs_cell_color-color-col = 6.
+    gs_cell_color-color-int = 0.
+    gs_cell_color-color-inv = 1.
+    APPEND gs_cell_color TO gs_sflight-cell_color.
+    MODIFY gt_sflight FROM gs_sflight.
+
+
+    " FLDATE: Bugünden önceyse farklı renk
+    IF gs_sflight-fldate < sy-datum.
+      CLEAR gs_cell_color.
+      gs_cell_color-fieldname = 'FLDATE'.
+      gs_cell_color-color-col = 7.
+      gs_cell_color-color-int = 0.
+      gs_cell_color-color-inv = 1.
+      APPEND gs_cell_color TO gs_sflight-cell_color.
+      MODIFY gt_sflight FROM gs_sflight.
+    ENDIF.
+
+
+    " PRICE: 500’den büyükse farklı renk
+    IF gs_sflight-price > 500.
+      CLEAR gs_cell_color.
+      gs_cell_color-fieldname = 'PRICE'.
+      gs_cell_color-color-col = 4.
+      gs_cell_color-color-int = 0.
+      gs_cell_color-color-inv = 2.
+      APPEND gs_cell_color TO gs_sflight-cell_color.
+      MODIFY gt_sflight FROM gs_sflight.
+    ENDIF.
+
+
+    CLEAR gs_cell_color.
+    gs_cell_color-fieldname = 'CURRENCY'.
+    gs_cell_color-color-col = 3.
+    gs_cell_color-color-int = 1.
+    gs_cell_color-color-inv = 2.
+    APPEND gs_cell_color TO gs_sflight-cell_color.
+    MODIFY gt_sflight FROM gs_sflight.
+
+
+    CLEAR gs_cell_color.
+    gs_cell_color-fieldname = 'PLANETYPE'.
+    gs_cell_color-color-col = 6.
+    gs_cell_color-color-int = 0.
+    gs_cell_color-color-inv = 0.
+    APPEND gs_cell_color TO gs_sflight-cell_color.
+    MODIFY gt_sflight FROM gs_sflight.
+
+
+    " SEATSMAX: 300’den büyükse farklı renk
+    IF gs_sflight-seatsmax > 300.
+      CLEAR gs_cell_color.
+      gs_cell_color-fieldname = 'SEATSMAX'.
+      gs_cell_color-color-col = 4.
+      gs_cell_color-color-int = 1.
+      gs_cell_color-color-inv = 1.
+      APPEND gs_cell_color TO gs_sflight-cell_color.
+      MODIFY gt_sflight FROM gs_sflight.
+    ENDIF.
+
+
+    " SEATSOCC: %70'ten fazlaysa farklı renk
+    IF gs_sflight-seatsocc > ( gs_sflight-seatsmax * 70 / 100 ).
+      CLEAR gs_cell_color.
+      gs_cell_color-fieldname = 'SEATSOCC'.
+      gs_cell_color-color-col = 6.
+      gs_cell_color-color-int = 1.
+      gs_cell_color-color-inv = 0.
+      APPEND gs_cell_color TO gs_sflight-cell_color.
+      MODIFY gt_sflight FROM gs_sflight.
+    ENDIF.
+
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------*
+*& Form FILL_FIELD_CATALOG
+*&---------------------------------------------------*
+FORM fill_field_catalog.
+
+  CLEAR gt_fieldcat.
+
+  " Havayolu Kodu
+  gs_fieldcat-fieldname  = 'CARRID'.
+  gs_fieldcat-seltext_m  = 'Carrier'.
+  gs_fieldcat-outputlen  = 10.
+  gs_fieldcat-key        = 'X'.   " Anahtar alan
+  gs_fieldcat-hotspot = 'X'.
+  APPEND gs_fieldcat TO gt_fieldcat.
+
+  " Uçuş Numarası
+  gs_fieldcat-fieldname  = 'CONNID'.
+  gs_fieldcat-seltext_m  = 'Connection ID'.
+  gs_fieldcat-outputlen  = 10.
+  gs_fieldcat-key        = 'X'.   " Anahtar alan
+  gs_fieldcat-hotspot = ''.
+  APPEND gs_fieldcat TO gt_fieldcat.
+
+  " Uçuş Tarihi
+  gs_fieldcat-fieldname  = 'FLDATE'.
+  gs_fieldcat-seltext_m  = 'Flight Date'.
+  gs_fieldcat-outputlen  = 15.
+  gs_fieldcat-datatype   = 'DATS'.
+  gs_fieldcat-hotspot = ' '.
+  gs_fieldcat-do_sum = ' '.
+  APPEND gs_fieldcat TO gt_fieldcat.
+
+  " Fiyat
+  gs_fieldcat-fieldname  = 'PRICE'.
+  gs_fieldcat-seltext_m  = 'Price'.
+  gs_fieldcat-outputlen  = 10.
+  gs_fieldcat-datatype   = 'CURR'.
+  gs_fieldcat-hotspot = 'X'.
+  gs_fieldcat-do_sum = 'X'.
+  APPEND gs_fieldcat TO gt_fieldcat.
+
+  " Para Birimi
+  gs_fieldcat-fieldname  = 'CURRENCY'.
+  gs_fieldcat-seltext_m  = 'Currency'.
+  gs_fieldcat-outputlen  = 5.
+  gs_fieldcat-hotspot = ' '.
+  gs_fieldcat-do_sum = ' '.
+  APPEND gs_fieldcat TO gt_fieldcat.
+
+  " Uçak Tipi
+  gs_fieldcat-fieldname  = 'PLANETYPE'.
+  gs_fieldcat-seltext_m  = 'Plane Type'.
+  gs_fieldcat-outputlen  = 10.
+  gs_fieldcat-hotspot = ' '.
+  gs_fieldcat-do_sum = ' '.
+  APPEND gs_fieldcat TO gt_fieldcat.
+
+  " Maksimum Koltuk Sayısı
+  gs_fieldcat-fieldname  = 'SEATSMAX'.
+  gs_fieldcat-seltext_m  = 'Max Seats'.
+  gs_fieldcat-outputlen  = 10.
+  gs_fieldcat-datatype   = 'INT4'.
+  gs_fieldcat-hotspot = ' '.
+  gs_fieldcat-do_sum = 'X'.
+  APPEND gs_fieldcat TO gt_fieldcat.
+
+  " Dolu Koltuk Sayısı
+  gs_fieldcat-fieldname  = 'SEATSOCC'.
+  gs_fieldcat-seltext_m  = 'Occupied Seats'.
+  gs_fieldcat-outputlen  = 10.
+  gs_fieldcat-datatype   = 'INT4'.
+  gs_fieldcat-hotspot = ' '.
+  gs_fieldcat-do_sum = 'X'.
+  APPEND gs_fieldcat TO gt_fieldcat.
+
+ENDFORM.
+
+*&---------------------------------------------------*
+*& Form SET_LAYOUT
+*&---------------------------------------------------*
+FORM set_layout.
+
+  CLEAR gs_layout.
+  gs_layout-zebra              = 'X'.        " Zebra görünüm
+  gs_layout-colwidth_optimize  = 'X'.        " Otomatik genişlik
+  gs_layout-edit               = 'X'.        " Düzenlenebilir satırlar
+  gs_layout-totals_text        = 'Toplam'.   " Toplam satır başlığı
+  gs_layout-coltab_fieldname = 'CELL_COLOR'.
+
+ENDFORM.
+
+FORM build_events.
+  DATA: ls_event TYPE slis_alv_event.
+  CLEAR ls_event.
+  ls_event-name = slis_ev_user_command.
+  ls_event-form = 'USER_COMMAND'.
+  APPEND ls_event TO gt_events.
+ENDFORM.
+
+FORM display_alv.
+
+  "ALV üst bilgi (TOP_OF_PAGE) olayını ekleme
+  gs_event-name = slis_ev_top_of_page.
+  gs_event-form = 'TOP_OF_PAGE'.
+  APPEND gs_event TO gt_events.
+
+  "ALV'de hariç tutulan fonksiyon kodları
+  gs_exclude-fcode = '%SL'.                     "Posta alıcısı butonunu kaldır
+  APPEND gs_exclude TO gt_exclude.
+
+  gs_exclude-fcode = '&ETA'.                   "Ayrıntılar butonunu kaldır
+  APPEND gs_exclude TO gt_exclude.
+
+*  "ALV sıralama ayarları (Öncelik: bsart, Azalan)
+*  CLEAR: gs_sort.
+*  gs_sort-spos = 1.
+*  gs_sort-tabname = 'gt_sflight'.
+*  gs_sort-fieldname = 'PRICE'.
+*  gs_sort-down = abap_true.   " Azalan sıralama
+*  APPEND gs_sort TO gt_sort.
+
+*  CLEAR: gs_filter.
+*  gs_filter-fieldname    = 'CARRID'. " Filtre uygulanacak kolon
+*  gs_filter-sign0        = 'I'.      " İçinde (Include)
+*  gs_filter-optio        = 'EQ'.     " Eşit olanları al
+*  gs_filter-valuf_int    = 'AZ'.     " Havayolu şirketi değeri = AZ
+*  APPEND gs_filter TO gt_filter.
+
+*  gs_variant-variant = '/DUZEN2'.
+
+  IF gv_alv_called IS INITIAL.
+    " ALV'yi göster
+    CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+      EXPORTING
+*       I_INTERFACE_CHECK       = ' '   "ALV fonksiyonunun doğru parametrelerle çağrılıp çağrılmadığını kontrol eder.(True/False)
+*       I_BYPASSING_BUFFER      = ' '   "ALV çıktısını oluştururken tampon belleğin (buffer) kullanılmasını engeller.(True/False)
+        "Veriler sık sık güncelleniyorsa (SELECT işlemi değişkense) tampon kullanmak yerine her seferinde taze veri çekmeyi sağlar.
+*       I_BUFFER_ACTIVE         = ' '   "Tampon belleğin kullanılması sağlanır. Performansı artırır, çünkü veri tekrar yüklenmez ve bellekte saklanır.(True/False)
+        i_callback_program      = sy-repid
+*       i_callback_pf_status_set    = ''   "Kendi PF-Status'u nü tanımlamak istersen
+        i_callback_user_command = 'USER_COMMAND'
+        i_callback_top_of_page  = 'TOP_OF_PAGE'
+*       I_CALLBACK_HTML_TOP_OF_PAGE = ' '   "ALV Grid'in HTML çıktısı için özel üst bilgi (header)
+*       i_callback_html_end_of_list = ''    "ve alt bilgi (footer) eklemeye yarar.
+*       I_STRUCTURE_NAME        =
+*       I_BACKGROUND_ID         = ' '       "ALV arka plan rengini değiştirmek için
+*       I_GRID_TITLE            =           "ALV başlık
+*       I_GRID_SETTINGS         =           "ALV’nin özel ayarlarını yapmak için
+        is_layout               = gs_layout       "ALV'nin genel görünümünü belirler.
+        it_fieldcat             = gt_fieldcat     "ALV sütunlarının özelliklerini tanımlar.
+        it_excluding            = gt_exclude      "ALV toolbar üzerindeki belirli butonları kaldırır.
+*       it_special_groups       = gt_special_groups  "Verileri özel bir kategoriye ayırmak için kullanılır.
+        it_sort                 = gt_sort             "Kolonları istenilen düzene göre sıralama için kullanılır.
+        it_filter               = gt_filter
+*       IS_SEL_HIDE             =
+*       I_DEFAULT               = 'X'
+        i_save                  = 'X'
+        is_variant              = gs_variant         "Kaydedilen variantlar(görünüm) içerisinden isteğe bağlı(parametre şeklinde alarak), variantı getirme.
+        it_events               = gt_events
+*       IT_EVENT_EXIT           =
+*       IS_PRINT                =
+*       IS_REPREP_ID            =
+*       I_SCREEN_START_COLUMN   = 40
+*       I_SCREEN_START_LINE     = 5
+*       I_SCREEN_END_COLUMN     = 100
+*       I_SCREEN_END_LINE       = 20
+*       I_HTML_HEIGHT_TOP       = 0
+*       I_HTML_HEIGHT_END       = 0
+*       IT_ALV_GRAPHICS         =
+*       IT_HYPERLINK            =
+*       IT_ADD_FIELDCAT         =
+*       IT_EXCEPT_QINFO         =
+*       IR_SALV_FULLSCREEN_ADAPTER  =
+*                  IMPORTING
+*       E_EXIT_CAUSED_BY_CALLER =
+*       ES_EXIT_CAUSED_BY_USER  =
+      TABLES
+        t_outtab                = gt_sflight
+      EXCEPTIONS
+        program_error           = 1
+        OTHERS                  = 2.
+    gv_alv_called = 'X'.  " ALV'nin çağrıldığını işaretle
+  ENDIF.
+  IF sy-subrc <> 0.
+    MESSAGE 'ALV gösterilemedi!' TYPE 'E'.
+  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  TOP_OF_PAGE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM top_of_page .
+
+  " Eğer daha önce gösterildiyse çık
+  IF gv_top_displayed = abap_true.
+    EXIT.
+  ENDIF.
+
+  CLEAR: ls_header.
+  ls_header-typ = 'H'.
+  ls_header-info = 'Uçuş Bilgileri Raporu'.
+  APPEND ls_header TO lt_header.
+
+  CLEAR: ls_header.
+  ls_header-typ = 'S'.
+  ls_header-key = 'Tarih:'.
+  CONCATENATE sy-datum+6(2)
+              '.'
+              sy-datum+4(2)
+              '.'
+              sy-datum+0(4)
+              INTO lv_date.
+  ls_header-info = lv_date.
+  APPEND ls_header TO lt_header.
+
+  CLEAR ls_header.
+  ls_header-typ  = 'S'.
+  ls_header-key  = 'Çalıştıran:'.
+  ls_header-info = sy-uname.
+  APPEND ls_header TO lt_header.
+
+  CALL FUNCTION 'REUSE_ALV_COMMENTARY_WRITE'
+    EXPORTING
+      it_list_commentary = lt_header.
+
+
+  " Bir kez çalıştığını işaretle
+  gv_top_displayed = abap_true.
+
+ENDFORM.
+
+FORM user_command USING r_ucomm TYPE sy-ucomm
+                         ps_selfield TYPE slis_selfield.
+
+  DATA: lv_mes TYPE char200.
+
+  " Programdan çıkış kontrolü
+  CASE r_ucomm.
+    WHEN '&F03'.
+      LEAVE PROGRAM.
+
+    WHEN '&IC1'.  " ALV'de bir satıra tıklama kontrolü
+      CASE ps_selfield-fieldname.
+        WHEN 'CARRID'.
+          CONCATENATE ps_selfield-value
+                      'numaralı havayolu şirketi tıklanmıştır.'
+                      INTO lv_mes SEPARATED BY space.
+          MESSAGE lv_mes TYPE 'I'.
+
+        WHEN 'PRICE'.
+          CONCATENATE ps_selfield-value
+                      'tutarlı fiyat tıklanmıştır.'
+                      INTO lv_mes SEPARATED BY space.
+          MESSAGE lv_mes TYPE 'I'.
+      ENDCASE.
+  ENDCASE.
+ENDFORM.
